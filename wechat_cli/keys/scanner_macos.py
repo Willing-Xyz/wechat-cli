@@ -7,12 +7,7 @@ import subprocess
 import sys
 import tempfile
 
-from .common import (
-    collect_db_files,
-    cross_verify_keys,
-    save_results,
-    verify_enc_key,
-)
+from .common import verify_enc_key
 
 
 def _find_binary():
@@ -122,43 +117,44 @@ def _resign_wechat():
 def extract_keys(db_dir, output_path, pid=None):
     """通过 C 二进制提取 macOS 微信数据库密钥。
 
-    C 二进制需要在微信数据目录的父目录下运行，
-    因为它会自动检测 db_storage 子目录。
-    输出 all_keys.json 到当前工作目录。
+    C 二进制在私有临时目录运行，自动发现本机微信数据库。
+    候选密钥必须通过所选账号数据库的 HMAC 校验才会保存。
 
     Args:
         db_dir: 微信 db_storage 目录
         output_path: all_keys.json 输出路径
-        pid: 未使用（C 二进制自动检测进程）
+        pid: 可选微信进程号；默认由 C 二进制自动检测
 
     Returns:
         dict: salt_hex -> enc_key_hex 映射
     """
     import json
 
-    db_files, salt_to_dbs = collect_db_files(db_dir)
-    if not db_files:
-        raise RuntimeError(f"在 {db_dir} 未找到可解密的 .db 文件")
-
-    print(f"[+] 找到 {len(db_files)} 个数据库, {len(salt_to_dbs)} 个不同的 salt")
     binary = _find_binary()
 
-    # C 二进制的工作目录需要是 db_storage 的父目录
-    work_dir = os.path.dirname(db_dir)
-    if not os.path.isdir(work_dir):
-        raise RuntimeError(f"微信数据目录不存在: {work_dir}")
+    if not os.path.isdir(db_dir):
+        raise RuntimeError(f"微信数据目录不存在: {db_dir}")
 
     print(f"[+] 使用 C 二进制提取密钥: {binary}")
-    print(f"[+] 工作目录: {work_dir}")
-
     try:
-        result = subprocess.run(
-            [binary],
-            cwd=work_dir,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
+        # Isolate output from previous scans. The C helper discovers account
+        # databases independently of its working directory.
+        with tempfile.TemporaryDirectory(prefix="wechat-key-scan-") as work_dir:
+            result = subprocess.run(
+                [binary] + ([str(pid)] if pid is not None else []),
+                cwd=work_dir,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            c_output = os.path.join(work_dir, "all_keys.json")
+            keys_data = None
+            if result.returncode == 0 and os.path.exists(c_output):
+                try:
+                    with open(c_output, encoding="utf-8") as f:
+                        keys_data = json.load(f)
+                except (ValueError, OSError) as e:
+                    raise RuntimeError("密钥扫描结果格式无效，原有密钥未修改") from e
     except subprocess.TimeoutExpired:
         raise RuntimeError("密钥提取超时（120s）")
     except PermissionError:
@@ -185,7 +181,7 @@ def extract_keys(db_dir, output_path, pid=None):
                 "已对微信重新签名（保留原有权限）。请执行以下步骤后重试：\n"
                 "  1. 退出微信（完全退出，不是最小化）\n"
                 "  2. 重新打开微信并登录\n"
-                "  3. 再次执行: sudo wechat-cli init"
+                "  3. 再次执行: sudo wechat-cli init --force"
             )
         else:
             # 手动命令也需要保留原有权限
@@ -200,74 +196,57 @@ def extract_keys(db_dir, output_path, pid=None):
                 "  codesign --force --sign - --entitlements wechat_ent.plist /Applications/WeChat.app\n"
                 "  # 4. 清理\n"
                 "  rm wechat_ent.plist\n"
-                "然后重启微信，再执行: sudo wechat-cli init"
+                "然后重启微信，再执行: sudo wechat-cli init --force"
             )
 
     if result.returncode != 0:
-        raise RuntimeError(
-            f"密钥扫描程序退出（状态码 {result.returncode}）"
-            + (f": {result.stderr.strip()}" if result.stderr else "")
-        )
+        raise RuntimeError(f"密钥扫描程序退出（状态码 {result.returncode}），原有密钥未修改")
+    if not isinstance(keys_data, dict) or not keys_data:
+        raise RuntimeError("未提取到密钥，原有密钥未修改；请确认已登录及微信版本兼容性")
 
-    # C 二进制输出 all_keys.json 到 work_dir
-    c_output = os.path.join(work_dir, "all_keys.json")
-    if not os.path.exists(c_output):
-        raise RuntimeError(
-            "C 二进制未能生成密钥文件。\n"
-            f"stdout: {result.stdout}\nstderr: {result.stderr}"
-        )
-
-    # C 扫描器输出的是候选值；在 Python 中用数据库页的 HMAC 再校验一次。
-    # 这样既能支持新版 Config.Cipher，也不会把误匹配写入用户配置。
-    try:
-        with open(c_output, encoding="utf-8") as f:
-            keys_data = json.load(f)
-    finally:
-        # all_keys.json 只是 C 扫描器和当前进程之间的临时通信文件。
-        if os.path.abspath(c_output) != os.path.abspath(output_path):
+    def verified_entries(entries):
+        valid = {}
+        if not isinstance(entries, dict):
+            return valid
+        root = os.path.realpath(db_dir)
+        for rel, info in entries.items():
+            if not isinstance(info, dict) or not isinstance(info.get("enc_key"), str):
+                continue
+            path = os.path.realpath(os.path.join(root, rel))
+            if os.path.commonpath([root, path]) != root:
+                continue
             try:
-                os.remove(c_output)
-            except FileNotFoundError:
-                pass
+                key = bytes.fromhex(info["enc_key"])
+                with open(path, "rb") as f:
+                    page = f.read(4096)
+                if len(key) != 32 or len(page) != 4096 or not verify_enc_key(key, page):
+                    continue
+            except (OSError, ValueError):
+                continue
+            valid[rel] = {"enc_key": key.hex(), "salt": page[:16].hex()}
+        return valid
 
-    if not isinstance(keys_data, dict):
-        raise RuntimeError("密钥扫描程序输出格式无效")
+    candidates = verified_entries(keys_data)
+    if not candidates:
+        raise RuntimeError("没有候选密钥通过数据库 HMAC 校验，原有密钥未修改")
+    existing = {}
+    if os.path.exists(output_path):
+        with open(output_path, encoding="utf-8") as f:
+            existing = verified_entries(json.load(f))
+    existing.update(candidates)
 
-    db_by_rel = {item[0]: item for item in db_files}
-    key_map = {}
-    candidate_count = 0
-    verified_count = 0
-    for rel, info in keys_data.items():
-        if not isinstance(info, dict) or "enc_key" not in info:
-            continue
-        enc_key_hex = info["enc_key"]
-        if not isinstance(enc_key_hex, str):
-            continue
-        try:
-            enc_key = bytes.fromhex(enc_key_hex)
-        except ValueError:
-            continue
-        if len(enc_key) != 32:
-            continue
-
-        candidate_count += 1
-        salt_hex = info.get("salt")
-        if not isinstance(salt_hex, str):
-            db_info = db_by_rel.get(rel)
-            salt_hex = db_info[3] if db_info else None
-        if salt_hex not in salt_to_dbs:
-            continue
-
-        for _db_rel, _path, _size, db_salt, page1 in db_files:
-            if db_salt == salt_hex and verify_enc_key(enc_key, page1):
-                key_map[salt_hex] = enc_key_hex.lower()
-                verified_count += 1
-                break
-
-    print(f"[+] 候选密钥 {candidate_count} 个，HMAC 校验通过 {verified_count} 个")
-
-    # 构建 salt -> key 映射，并交叉验证同一密钥对应的其他数据库。
-    cross_verify_keys(db_files, salt_to_dbs, key_map, print)
-
-    print(f"\n[+] 提取到 {len(key_map)} 个密钥，保存到: {output_path}")
-    return save_results(db_files, salt_to_dbs, key_map, output_path, print)
+    parent = os.path.dirname(os.path.abspath(output_path))
+    os.makedirs(parent, exist_ok=True)
+    fd, staged = tempfile.mkstemp(prefix=".keys-", dir=parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(existing, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(staged, output_path)
+    finally:
+        if os.path.exists(staged):
+            os.unlink(staged)
+    key_map = {info["salt"]: info["enc_key"] for info in existing.values()}
+    print(f"\n[+] HMAC 校验通过 {len(candidates)} 个，本地共保存 {len(existing)} 个数据库密钥")
+    return key_map

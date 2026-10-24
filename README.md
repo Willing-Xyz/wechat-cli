@@ -31,6 +31,19 @@ Chat history · Contacts · Sessions · Favorites · Statistics · Export
 
 AI Agents — skip ahead to "Installation (For AI Agents)" below.
 
+### This fork's compatibility fix (0.2.5)
+
+Install or update from this repository to get the macOS WeChat 4.1.13 key extraction fix:
+
+```bash
+python3 -m pip install --upgrade "git+https://github.com/sunfeihu007/wechat-cli.git@main"
+wechat-cli --version
+```
+
+Use a Python virtual environment to avoid system Python restrictions. With Homebrew Python, create one using `python3 -m venv ~/.venvs/wechat-cli` and activate it using `source ~/.venvs/wechat-cli/bin/activate`. Confirm version `0.2.5`, log in to WeChat on that machine, then run `wechat-cli init --force`. If administrator access is required, run `sudo "$(command -v wechat-cli)" init --force`. After re-signing, fully restart WeChat, log in, and repeat the same command.
+
+The npm/PyPI instructions below refer to upstream releases. This fork's fix is distributed through the Git URL above and includes the rebuilt macOS arm64 helper. Other platform extractors are unchanged.
+
 ### npm (Recommended)
 
 ```bash
@@ -56,7 +69,7 @@ Requires Python >= 3.10.
 ### From Source
 
 ```bash
-git clone https://github.com/freestylefly/wechat-cli.git
+git clone https://github.com/sunfeihu007/wechat-cli.git
 cd wechat-cli
 pip install -e .
 ```
@@ -68,7 +81,7 @@ pip install -e .
 Simply paste the following prompt into Claude Code, OpenClaw, or any AI coding agent:
 
 ```bash
-帮我配置并安装：npm install -g @canghe_ai/wechat-cli
+Install or update WeChat CLI from the main branch of https://github.com/sunfeihu007/wechat-cli in a Python virtual environment, confirm version 0.2.5, then refresh keys after WeChat is logged in on this machine.
 ```
 
 For example, in Claude Code:
@@ -128,7 +141,7 @@ On some macOS systems, `init` may fail with `task_for_pid failed` even when runn
 1. The tool will re-sign WeChat automatically
 2. Quit WeChat completely (not just minimize)
 3. Reopen WeChat and log in
-4. Run `sudo wechat-cli init` again
+4. Run `sudo wechat-cli init --force` again
 
 If auto re-signing fails, you can do it manually:
 
@@ -327,9 +340,9 @@ The `--type` option (on `history` and `search`):
 ## 💻 System Requirements
 
 - **macOS** ≥ 26.3.1
-- **WeChat for Mac** ≤ 4.1.8.100
+- **WeChat for Mac**: legacy hex scanning supports ≤ 4.1.8.100. This branch also reads `Config.Cipher`, verified on Apple Silicon WeChat 4.1.13 (269631) against all 33 local database keys.
 
-> Older macOS versions or newer WeChat versions may not be compatible.
+> Other WeChat builds may require different layouts. Failed, empty, or invalid scans preserve existing keys. Verified new keys are merged with verified existing keys and saved atomically.
 
 ---
 

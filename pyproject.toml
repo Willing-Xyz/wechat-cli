@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wechat-cli"
-version = "0.2.4"
+version = "0.2.5"
 description = "WeChat data query CLI for LLMs"
 requires-python = ">=3.10"
 dependencies = [
@@ -18,6 +18,7 @@ wechat-cli = "wechat_cli.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["wechat_cli*"]
 
 [tool.setuptools.package-data]
 wechat_cli = ["bin/*"]

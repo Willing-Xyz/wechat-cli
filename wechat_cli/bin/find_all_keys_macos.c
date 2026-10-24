@@ -1,8 +1,10 @@
 /*
  * find_all_keys_macos.c - macOS WeChat memory key scanner
  *
- * Scans WeChat process memory for SQLCipher encryption keys in the
- * x'<key_hex><salt_hex>' format used by WeChat 4.x on macOS.
+ * Scans legacy SQLCipher hex literals and WeChat 4.1.x Config.Cipher.
+ * Config.Cipher discovery adapted from huohuoer/wechat-cli PR #23,
+ * commit 44c7e9591aded0c44ce0ac4517b8297939bdea16.
+ * macOS 4.1.13 layouts validated against database-page HMAC.
  *
  * Prerequisites:
  *   - WeChat must be ad-hoc signed (or SIP disabled)
@@ -73,16 +75,17 @@ static uint64_t read_u64_le(const unsigned char *p) {
 }
 
 static int is_probable_key(const char *key_hex) {
-    unsigned char seen[256] = {0};
-    int distinct = 0;
+    /* Entropy heuristics reject valid random keys on other machines.
+     * Check the encoding here; database HMAC is the authority in Python. */
+    if (strlen(key_hex) != 64)
+        return 0;
     for (int i = 0; i < 64; i++) {
         unsigned char c = (unsigned char)key_hex[i];
-        if (!seen[c]) {
-            seen[c] = 1;
-            distinct++;
-        }
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+              (c >= 'A' && c <= 'F')))
+            return 0;
     }
-    return distinct >= 15;
+    return 1;
 }
 
 static void lowercase_hex(char *value) {
@@ -359,23 +362,25 @@ static void process_config_reference(
                         config_pointer))
         return;
 
-    /* WCDB's Config object contains the std::string/blob at +0x88. */
-    unsigned char config_value[0x28];
-    if (read_task_memory(task, config_pointer + 0x88,
-                         sizeof(config_value), config_value) < 0x18)
-        return;
-
-    uint64_t data_pointer = read_u64_le(config_value + 0x08);
-    uint64_t data_length = read_u64_le(config_value + 0x10);
-    if (data_pointer < 0x10000 || data_pointer >= 0x0000800000000000ULL ||
-        data_length == 0 || data_length > CONFIG_BLOB_MAX)
-        return;
-
-    unsigned char blob[CONFIG_BLOB_MAX];
-    if (read_task_memory(task, data_pointer, data_length, blob) != data_length)
-        return;
-    decode_config_blob(blob, (size_t)data_length, keys, key_count,
-                       candidate_count);
+    /* Layouts verified on macOS WeChat 4.1.13 plus the older layout.
+     * Accept only readable, bounded blobs with matching database salts.
+     * Python independently verifies every candidate using page-1 HMAC. */
+    const size_t layouts[] = {0x68, 0x90, 0x88};
+    for (size_t i = 0; i < sizeof(layouts) / sizeof(layouts[0]); i++) {
+        unsigned char value[0x18];
+        if (read_task_memory(task, config_pointer + layouts[i],
+                             sizeof(value), value) != sizeof(value))
+            continue;
+        uint64_t data_pointer = read_u64_le(value + 0x08);
+        uint64_t data_length = read_u64_le(value + 0x10);
+        if (data_pointer < 0x10000 || data_pointer >= 0x0000800000000000ULL ||
+            data_length == 0 || data_length > CONFIG_BLOB_MAX)
+            continue;
+        unsigned char blob[CONFIG_BLOB_MAX];
+        if (read_task_memory(task, data_pointer, data_length, blob) != data_length)
+            continue;
+        decode_config_blob(blob, (size_t)data_length, keys, key_count, candidate_count);
+    }
 }
 
 static void scan_region_for_config_references(
@@ -433,6 +438,7 @@ static void scan_region_for_config_references(
 }
 
 int main(int argc, char *argv[]) {
+    umask(077);
     pid_t pid;
     if (argc >= 2)
         pid = atoi(argv[1]);
@@ -625,7 +631,7 @@ int main(int argc, char *argv[]) {
             config_scan_addr += size;
         }
     }
-    if (config_candidate_count > 0) {
+    if (name_address_count > 0) {
         printf("Config.Cipher regions: %d, blobs: %d, candidates: %d, keys: %d\n",
                config_region_count, seen_config_pointer_count,
                config_candidate_count, key_count);
@@ -653,7 +659,7 @@ int main(int argc, char *argv[]) {
         }
         printf("%-25s %-66s %s\n",
             db ? db : "(unknown)",
-            keys[i].key_hex,
+            "[redacted]",
             keys[i].salt_hex);
     }
     printf("\nMatched %d/%d keys to known DBs\n", matched, key_count);
