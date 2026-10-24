@@ -33,14 +33,16 @@ AI Agent 请直接移步到“安装（给 Agent 看）”
 
 ### 本仓库修复版（0.2.5）
 
-本分支包含 macOS 微信 4.1.13 的密钥提取兼容修复。新机器或已安装机器请从此仓库安装或升级：
+本分支包含 macOS 微信 4.1.x 的密钥提取兼容修复（已在 Apple Silicon 微信 4.1.13 与 4.1.15 上实测通过，详见 [docs/macos-4.1-key-fix.md](docs/macos-4.1-key-fix.md)）。新机器或已安装机器请从此仓库安装或升级：
 
 ```bash
-python3 -m pip install --upgrade "git+https://github.com/sunfeihu007/wechat-cli.git@main"
+uv tool install "wechat-cli @ git+https://github.com/Willing-Xyz/wechat-cli.git@main"
+# 或在虚拟环境中用 pip：
+python3 -m pip install --upgrade "git+https://github.com/Willing-Xyz/wechat-cli.git@main"
 wechat-cli --version
 ```
 
-在 Python 虚拟环境中执行上述安装可避免系统 Python 的权限限制；使用 Homebrew Python 时可先执行 `python3 -m venv ~/.venvs/wechat-cli`，然后 `source ~/.venvs/wechat-cli/bin/activate`。确认命令显示 `0.2.5`，并在本机微信登录后运行 `wechat-cli init --force`。如果工具提示需要管理员权限，使用 `sudo "$(command -v wechat-cli)" init --force`；若发生重新签名，需要完整重启微信、登录后再执行同一命令。
+在本机微信登录后运行 `wechat-cli init --force`。若第一次运行报 `task_for_pid failed`，工具会自动对微信重签名：完全退出微信 → 重新打开并登录 → 再次执行同一条命令。重签名后通常无需 sudo；个别系统如提示权限不足，使用 `sudo "$(command -v wechat-cli)" init --force`。
 
 下面的 npm/PyPI 安装方式对应上游发行包；本分支修复通过上面的 Git 地址提供。macOS arm64 扫描器已随源码打包，其他平台的提取器行为保持原样。
 
@@ -69,7 +71,7 @@ pip install wechat-cli
 ### 从源码安装
 
 ```bash
-git clone https://github.com/sunfeihu007/wechat-cli.git
+git clone https://github.com/Willing-Xyz/wechat-cli.git
 cd wechat-cli
 pip install -e .
 ```
@@ -81,7 +83,7 @@ pip install -e .
 直接将在你的 Claude Code 或者 OpenClaw 中输入以下提示即可：
 
 ```bash
-请从 https://github.com/sunfeihu007/wechat-cli 的 main 分支安装或升级 WeChat CLI，使用 Python 虚拟环境，确认版本为 0.2.5；在本机微信登录后刷新密钥。
+请从 https://github.com/Willing-Xyz/wechat-cli 的 main 分支安装或升级 WeChat CLI，使用 Python 虚拟环境，确认版本为 0.2.5；在本机微信登录后刷新密钥。
 ```
 
 比如在 Claude Code 中输入：
@@ -338,11 +340,11 @@ wechat-cli new-messages                    # 后续: 仅返回上次以来的新
 ## 💻 系统要求
 
 - **macOS** ≥ 26.3.1
-- **微信 Mac 版**：原有十六进制扫描适用于 ≤ 4.1.8.100；本分支增加 `Config.Cipher` 读取，已在 Apple Silicon 微信 4.1.13（269631）验证 33 个数据库密钥。
+- **微信 Mac 版**：原有十六进制扫描适用于 ≤ 4.1.8.100；本分支增加 `Config.Cipher` 读取，已在 Apple Silicon 微信 4.1.13（33/33 个密钥）与 4.1.15（21/21 个密钥，HMAC 校验通过）实测。详见 [docs/macos-4.1-key-fix.md](docs/macos-4.1-key-fix.md)。
 
 > 其他微信构建仍可能需要适配。扫描失败、结果为空或 HMAC 校验失败时保留原密钥；通过校验的旧密钥与新密钥合并后原子保存。
 
-兼容修复参考 [上游 PR #23](https://github.com/huohuoer/wechat-cli/pull/23)，并修正本机 4.1.13 的对象字段偏移。回归测试：`python -m unittest discover -s tests -v`；macOS C 测试：`cc -O2 -Wall -Wextra -Werror tests/test_config_cipher.c -o /tmp/test_config_cipher -framework Foundation && /tmp/test_config_cipher`。
+兼容修复的完整过程、原理与构建说明见 [docs/macos-4.1-key-fix.md](docs/macos-4.1-key-fix.md)。回归测试：`python -m unittest discover -s tests -v`；macOS C 测试：`cc -O2 -Wall -Wextra -Werror tests/test_config_cipher.c -o /tmp/test_config_cipher -framework Foundation && /tmp/test_config_cipher`。
 
 ---
 

@@ -33,14 +33,16 @@ AI Agents — skip ahead to "Installation (For AI Agents)" below.
 
 ### This fork's compatibility fix (0.2.5)
 
-Install or update from this repository to get the macOS WeChat 4.1.13 key extraction fix:
+Install or update from this repository to get the macOS WeChat 4.1.x key extraction fix (verified on Apple Silicon WeChat 4.1.13 and 4.1.15 — see [docs/macos-4.1-key-fix.md](docs/macos-4.1-key-fix.md)):
 
 ```bash
-python3 -m pip install --upgrade "git+https://github.com/sunfeihu007/wechat-cli.git@main"
+uv tool install "wechat-cli @ git+https://github.com/Willing-Xyz/wechat-cli.git@main"
+# or, with pip in a virtual environment:
+python3 -m pip install --upgrade "git+https://github.com/Willing-Xyz/wechat-cli.git@main"
 wechat-cli --version
 ```
 
-Use a Python virtual environment to avoid system Python restrictions. With Homebrew Python, create one using `python3 -m venv ~/.venvs/wechat-cli` and activate it using `source ~/.venvs/wechat-cli/bin/activate`. Confirm version `0.2.5`, log in to WeChat on that machine, then run `wechat-cli init --force`. If administrator access is required, run `sudo "$(command -v wechat-cli)" init --force`. After re-signing, fully restart WeChat, log in, and repeat the same command.
+Log in to WeChat on that machine, then run `wechat-cli init --force`. If the first run reports `task_for_pid failed`, the tool re-signs WeChat automatically: fully quit WeChat, reopen and log in, then repeat the same command. After re-signing, sudo is normally not required; if your system insists, run `sudo "$(command -v wechat-cli)" init --force`.
 
 The npm/PyPI instructions below refer to upstream releases. This fork's fix is distributed through the Git URL above and includes the rebuilt macOS arm64 helper. Other platform extractors are unchanged.
 
@@ -69,7 +71,7 @@ Requires Python >= 3.10.
 ### From Source
 
 ```bash
-git clone https://github.com/sunfeihu007/wechat-cli.git
+git clone https://github.com/Willing-Xyz/wechat-cli.git
 cd wechat-cli
 pip install -e .
 ```
@@ -81,7 +83,7 @@ pip install -e .
 Simply paste the following prompt into Claude Code, OpenClaw, or any AI coding agent:
 
 ```bash
-Install or update WeChat CLI from the main branch of https://github.com/sunfeihu007/wechat-cli in a Python virtual environment, confirm version 0.2.5, then refresh keys after WeChat is logged in on this machine.
+Install or update WeChat CLI from the main branch of https://github.com/Willing-Xyz/wechat-cli in a Python virtual environment, confirm version 0.2.5, then refresh keys after WeChat is logged in on this machine.
 ```
 
 For example, in Claude Code:
@@ -340,7 +342,7 @@ The `--type` option (on `history` and `search`):
 ## 💻 System Requirements
 
 - **macOS** ≥ 26.3.1
-- **WeChat for Mac**: legacy hex scanning supports ≤ 4.1.8.100. This branch also reads `Config.Cipher`, verified on Apple Silicon WeChat 4.1.13 (269631) against all 33 local database keys.
+- **WeChat for Mac**: legacy hex scanning supports ≤ 4.1.8.100. This branch also reads `Config.Cipher`, verified on Apple Silicon WeChat 4.1.13 (269631, 33/33 keys) and 4.1.15 (21/21 keys, HMAC-checked). Details: [docs/macos-4.1-key-fix.md](docs/macos-4.1-key-fix.md).
 
 > Other WeChat builds may require different layouts. Failed, empty, or invalid scans preserve existing keys. Verified new keys are merged with verified existing keys and saved atomically.
 
